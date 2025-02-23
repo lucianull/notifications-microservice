@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  dotnet-notifications-api:
+    container_name: dotnet-notifications-api
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    ports:
+      - "9000:9000"
+    depends_on:
+      - redis
+      - rabbitmq
+      - ravendb
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ~/.microsoft:/root/.microsoft  # Cache for .NET SDK
+
+  redis:
+    container_name: dotnet-notifications-redis
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    container_name: dotnet-notifications-rabbitmq
+    image: rabbitmq:management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  ravendb:
+    container_name: dotnet-notifications-ravendb
+    image: ravendb/ravendb:latest
+    volumes:
+      - type: bind
+        source: ./docker/ravendb/data
+        target: /var/lib/ravendb/data
+      - type: bind
+        source: ./docker/ravendb/certs
+        target: /certs
+    ports:
+      - "8080:8080"
+    environment:
+      - RAVEN_Setup_Mode=None
+      - RAVEN_License_Eula_Accepted=true
+      - RAVEN_ServerUrl=http://0.0.0.0:8080
+      - RAVEN_PublicServerUrl=http://ravendb:8080
+      - RAVEN_ServerUrl_Tcp=tcp://0.0.0.0:38888
+      - RAVEN_PublicServerUrl_Tcp=tcp://ravendb:38888
+      - RAVEN_Security_UnsecuredAccessAllowed=PublicNetwork
+
+  nginx:
+    container_name: dotnet-notifications-nginx
+    image: nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - dotnet-notifications-api
