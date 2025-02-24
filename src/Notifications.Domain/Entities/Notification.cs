@@ -1,3 +1,4 @@
+using Newtonsoft.Json;
 using Notifications.Domain.Interfaces;
 using Notifications.Domain.Models;
 using Notifications.Domain.Models.Event;
@@ -7,6 +8,7 @@ namespace Notifications.Domain.Entities
 {
     public class Notification : IHasCompareExchangeKey
     {
+        public static readonly int OPTIMISTIC_RETRIES = 3;
         private string? id;
         private string groupId;
         private string notificationTypeId;

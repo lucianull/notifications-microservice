@@ -3,10 +3,10 @@ using Notifications.Application.Contracts;
 using Notifications.Domain.Entities;
 using Notifications.Domain.Enums;
 using Notifications.Domain.Exceptions;
-using Notifications.Domain.Models;
 using Notifications.Domain.Models.Event;
 using Notifications.Domain.Models.Notification;
 using Notifications.Infrastructure.Repositories;
+using Raven.Client.Exceptions;
 
 namespace Notifications.Application.Strategies.NotificationStrategies
 {
@@ -45,7 +45,7 @@ namespace Notifications.Application.Strategies.NotificationStrategies
 
             // Create new receivers for those emails
             var newReceivers = newReceiverEmails.Select(email => new Receiver { Email = email }).ToList();
-            if(newReceivers.Any())
+            if (newReceivers.Any())
             {
                 await _receiverRepository.AddReceiversAsync(newReceivers);
             }
@@ -77,14 +77,30 @@ namespace Notifications.Application.Strategies.NotificationStrategies
                 EventsCount = 1,
                 Events = new List<Event> { @event }
             };
-            try {
-                await _notificationRepository.TryCreateNotificationAsync(notification);
-            } catch(ResourceConflictException exception)
+            try
             {
-                Console.WriteLine($"Notification with id {exception.UniqueKey} already exists. Adding event to existing notification.");
-                Notification existingNotification = await _notificationRepository.GetByIdAsync(exception.UniqueKey);
-                existingNotification.AddOrUpdateEvent(@event);
-                await _notificationRepository.SaveAsync(existingNotification);
+                await _notificationRepository.TryCreateNotificationAsync(notification);
+            }
+            catch (ResourceConflictException exception)
+            {
+                for (int i = 1; i <= Notification.OPTIMISTIC_RETRIES; i++)
+                {
+                    try
+                    {
+                        Notification existingNotification = await _notificationRepository.GetByIdAsync(exception.UniqueKey);
+                        existingNotification.AddOrUpdateEvent(@event);
+                        await _notificationRepository.SaveAsync(existingNotification);
+                        break;
+                    }
+                    catch (ConcurrencyException ex)
+                    {
+                        if (i == Notification.OPTIMISTIC_RETRIES)
+                        {
+                            throw new Exception("Failed to update existing notification after multiple retries.", ex);
+                        }
+                    }
+                }
+
             }
         }
 

@@ -16,17 +16,13 @@ public class NotificationRepository : INotificationRepository
         _ravenDbContext = ravenDbContext;
     }
 
-    public async Task SaveAsync(Notification notification)
-    {
-        using var session = _ravenDbContext.Store.OpenAsyncSession();
-        await session.StoreAsync(notification);
-        await session.SaveChangesAsync();
-    }
-
     public async Task<Notification?> GetByIdAsync(string id)
     {
         using var session = _ravenDbContext.Store.OpenAsyncSession();
-        return await session.LoadAsync<Notification>(id);
+        session.Advanced.UseOptimisticConcurrency = true;
+        var notification = await session.LoadAsync<Notification>(id);
+
+        return notification;
     }
 
     public async Task<Notification?> GetPendingNotificationByTypeAndGroupIdAsync(NotificationTypeTagEnum type, string groupId)
@@ -57,7 +53,7 @@ public class NotificationRepository : INotificationRepository
                 if (existingNotification == null)
                 {
                     throw new Exception("Failed to acquire Compare Exchange lock, but no existing notification found.");
-                }                
+                }
 
                 throw new ResourceConflictException($"Notification with ID {existingNotification.Id} already exists.", existingNotification.Id);
             }
@@ -66,6 +62,13 @@ public class NotificationRepository : INotificationRepository
             await session.SaveChangesAsync();
             return notification;
         }
+    }
+
+    public async Task SaveAsync(Notification notification)
+    {
+        using var session = _ravenDbContext.Store.OpenAsyncSession();
+        await session.StoreAsync(notification);
+        await session.SaveChangesAsync();
     }
 
 }
