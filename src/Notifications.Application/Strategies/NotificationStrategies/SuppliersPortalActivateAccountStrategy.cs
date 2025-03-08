@@ -1,8 +1,10 @@
+using System.Linq;
 using AutoMapper;
 using Notifications.Application.Contracts;
 using Notifications.Domain.Entities;
 using Notifications.Domain.Enums;
 using Notifications.Domain.Exceptions;
+using Notifications.Domain.Models;
 using Notifications.Domain.Models.Event;
 using Notifications.Domain.Models.Notification;
 using Notifications.Infrastructure.Repositories;
@@ -17,6 +19,7 @@ namespace Notifications.Application.Strategies.NotificationStrategies
         private readonly IReceiverRepository _receiverRepository;
         private readonly IGroupRepository _groupRepository;
         private readonly INotificationRepository _notificationRepository;
+        private readonly IReceiverService _receiverService;
         private readonly IMapper _mapper;
 
         public SuppliersPortalActivateAccountStrategy(
@@ -24,6 +27,7 @@ namespace Notifications.Application.Strategies.NotificationStrategies
             IReceiverRepository receiverRepository,
             IGroupRepository groupRepository,
             INotificationRepository notificationRepository,
+            IReceiverService receiverService,
             IMapper mapper
         )
         {
@@ -31,39 +35,47 @@ namespace Notifications.Application.Strategies.NotificationStrategies
             _receiverRepository = receiverRepository ?? throw new ArgumentNullException(nameof(receiverRepository));
             _groupRepository = groupRepository ?? throw new ArgumentNullException(nameof(groupRepository));
             _notificationRepository = notificationRepository ?? throw new ArgumentNullException(nameof(notificationRepository));
+            _receiverService = receiverService ?? throw new ArgumentNullException(nameof(receiverService));
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
         }
 
         public async Task createEventAsync(EventCreateModel eventCreateModel)
         {
             NotificationType notificationType = await _notificationTypeRepository.GetNotificationTypeByTagAsync(eventCreateModel.Data.NotificationTypeTag);
-            var receiverEmails = eventCreateModel.ReceiverEmails;
-            var existingReceivers = await _receiverRepository.GetReceiversByEmailsAsync(eventCreateModel.ReceiverEmails);
-            var newReceiverEmails = receiverEmails
-                .Except(existingReceivers.Select(r => r.Email))
+            var receivers = eventCreateModel.Receivers;
+            var emailPhonePairs = receivers.Select(r => new EmailPhonePair { Email = r.Email, Phone = r.Phone }).ToList();
+            var existingReceivers = await _receiverRepository.GetReceiversByEmailsAndPhonesAsync(emailPhonePairs);
+            var newReceiverModels = receivers
+                .Where(r => !existingReceivers.Any(er => er.Email == r.Email && er.Phone == r.Phone))
                 .ToList();
 
-            // Create new receivers for those emails
-            var newReceivers = newReceiverEmails.Select(email => new Receiver { Email = email }).ToList();
-            if (newReceivers.Any())
+            // Create new receivers for those that don't exist
+            // If new receivers are created, then the group is also new for sure
+            Group? group = null;
+            if (newReceiverModels.Any())
             {
-                await _receiverRepository.AddReceiversAsync(newReceivers);
-            }
-
-            var allReceivers = existingReceivers.Concat(newReceivers);
-
-
-            var receiverIds = allReceivers.Select(r => r.Id).Where(id => id != null).Cast<string>().ToList();
-            var group = await _groupRepository.GetGroupByReceiverIdsAsync(receiverIds);
-
-            if (group == null)
-            {
-                // Handle case where no group was found or create a new one
+                var addedReceivers = await _receiverService.AddReceiversAsync(newReceiverModels);
+                existingReceivers = existingReceivers.Concat(addedReceivers).ToList();
+                var receiverIds = existingReceivers.Select(r => r.Id).Where(id => id != null).Cast<string>().ToList();
                 group = new Group
                 {
                     ReceiverIds = receiverIds
                 };
                 await _groupRepository.AddGroupAsync(group);
+
+            }
+            else
+            {
+                var receiverIds = existingReceivers.Select(r => r.Id).Where(id => id != null).Cast<string>().ToList();
+                group = await _groupRepository.GetGroupByReceiverIdsAsync(receiverIds);
+                if (group == null)
+                {
+                    group = new Group
+                    {
+                        ReceiverIds = receiverIds
+                    };
+                    await _groupRepository.AddGroupAsync(group);
+                }
             }
 
             Event @event = new Event
@@ -77,31 +89,38 @@ namespace Notifications.Application.Strategies.NotificationStrategies
                 EventsCount = 1,
                 Events = new List<Event> { @event }
             };
-            try
+            if (notificationType.TimeFrame > 0 && notificationType.Threshold > 1)
             {
-                await _notificationRepository.TryCreateNotificationAsync(notification);
-            }
-            catch (ResourceConflictException exception)
-            {
-                for (int i = 1; i <= Notification.OPTIMISTIC_RETRIES; i++)
+                try
                 {
-                    try
+                    await _notificationRepository.TryCreateNotificationAsyncWithLock(notification);
+                }
+                catch (ResourceConflictException exception)
+                {
+                    for (int i = 1; i <= Notification.OPTIMISTIC_RETRIES; i++)
                     {
-                        Notification existingNotification = await _notificationRepository.GetByIdAsync(exception.UniqueKey);
-                        existingNotification.AddOrUpdateEvent(@event);
-                        await _notificationRepository.SaveAsync(existingNotification);
-                        break;
-                    }
-                    catch (ConcurrencyException ex)
-                    {
-                        if (i == Notification.OPTIMISTIC_RETRIES)
+                        try
                         {
-                            throw new Exception("Failed to update existing notification after multiple retries.", ex);
+                            Notification existingNotification = await _notificationRepository.GetByIdAsync(exception.UniqueKey);
+                            existingNotification.AddOrUpdateEvent(@event);
+                            await _notificationRepository.SaveAsync(existingNotification);
+                            break;
+                        }
+                        catch (ConcurrencyException ex)
+                        {
+                            if (i == Notification.OPTIMISTIC_RETRIES)
+                            {
+                                throw new Exception("Failed to update existing notification after multiple retries.", ex);
+                            }
                         }
                     }
                 }
-
             }
+            else
+            {
+                await _notificationRepository.CreateNotificationAsync(notification);
+            }
+
         }
 
         public Task<NotificationBodyModel> createNotificationBodyObjectAsync(Notification notification)

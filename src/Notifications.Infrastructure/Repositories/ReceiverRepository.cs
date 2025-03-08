@@ -1,8 +1,8 @@
 using Notifications.Domain.Entities;
-using Raven.Client.Documents;
 using Raven.Client.Documents.Linq;
 using Notifications.Application.Contracts;
 using Notifications.Infrastructure.Indexes;
+using Notifications.Domain.Models;
 
 namespace Notifications.Infrastructure.Repositories
 {
@@ -14,15 +14,22 @@ namespace Notifications.Infrastructure.Repositories
         {
             _ravenDbContext = ravenDbContext;
         }
-
-        public async Task<List<Receiver>> GetReceiversByEmailsAsync(List<string> emails)
+        public async Task<List<Receiver>> GetReceiversByEmailsAndPhonesAsync(List<EmailPhonePair> emailPhonePairs)
         {
             using var session = _ravenDbContext.Store.OpenAsyncSession();
 
-            return await session
-                .Query<Receiver, Receivers_ByEmail>()
-                .Where(r => r.Email.In(emails))
-                .ToListAsync();
+            // Pre-compute the combined keys for the given pairs
+            var keys = emailPhonePairs
+                .Select(pair => pair.Email + ":" + pair.Phone)
+                .ToArray();
+
+            // Use the DocumentQuery API to query the index with a WhereIn clause
+            var receivers = await session.Advanced
+                                         .AsyncDocumentQuery<Receiver, Receivers_ByEmailAndPhone>()
+                                         .WhereIn("CombinedKey", keys)
+                                         .ToListAsync();
+
+            return receivers;
         }
 
         public async Task AddReceiversAsync(List<Receiver> receivers)

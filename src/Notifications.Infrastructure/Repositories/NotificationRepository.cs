@@ -4,6 +4,7 @@ using Notifications.Infrastructure.Indexes;
 using Notifications.Domain.Enums;
 using Notifications.Domain.Exceptions;
 using Raven.Client.Documents.Operations.CompareExchange;
+using Notifications.Domain.Models;
 
 namespace Notifications.Infrastructure.Repositories;
 
@@ -19,7 +20,6 @@ public class NotificationRepository : INotificationRepository
     public async Task<Notification?> GetByIdAsync(string id)
     {
         using var session = _ravenDbContext.Store.OpenAsyncSession();
-        session.Advanced.UseOptimisticConcurrency = true;
         var notification = await session.LoadAsync<Notification>(id);
 
         return notification;
@@ -33,7 +33,7 @@ public class NotificationRepository : INotificationRepository
                             .FirstOrDefaultAsync();
     }
 
-    public async Task<Notification> TryCreateNotificationAsync(Notification notification)
+    public async Task<Notification> TryCreateNotificationAsyncWithLock(Notification notification)
     {
         using (var session = _ravenDbContext.Store.OpenAsyncSession())
         {
@@ -64,9 +64,18 @@ public class NotificationRepository : INotificationRepository
         }
     }
 
+    public async Task<Notification> CreateNotificationAsync(Notification notification)
+    {
+        using var session = _ravenDbContext.Store.OpenAsyncSession();
+        await session.StoreAsync(notification);
+        await session.SaveChangesAsync();
+        return notification;
+    }
+
     public async Task SaveAsync(Notification notification)
     {
         using var session = _ravenDbContext.Store.OpenAsyncSession();
+        session.Advanced.UseOptimisticConcurrency = true;
         await session.StoreAsync(notification);
         await session.SaveChangesAsync();
     }

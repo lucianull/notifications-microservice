@@ -1,18 +1,17 @@
-namespace Notifications.Domain.Entities;
+using System.ComponentModel.DataAnnotations;
 
-public class Receiver
+namespace Notifications.Domain.Models;
+
+public class ReceiverModel
 {
-    private string? id;
+    [EmailAddress(ErrorMessage = "Invalid email address.")]
     private string? email = null;
+    [Phone(ErrorMessage = "Invalid phone number.")]
     private string? phone = null;
+    [Required(ErrorMessage = "First name is required.")]
     private string? firstName = null;
+    [Required(ErrorMessage = "Last name is required.")]
     private string? lastName = null;
-
-    public string? Id
-    {
-        get => id;
-        set => id = value;
-    }
 
     public string? Email
     {

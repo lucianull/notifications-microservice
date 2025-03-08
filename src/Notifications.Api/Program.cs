@@ -2,13 +2,11 @@ using DotNetEnv;
 using Notifications.Infrastructure;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
-using AutoMapper;
 using System.Reflection;
 using Notifications.Application.Strategies.NotificationStrategies;
 using Notifications.Infrastructure.Repositories;
 using Notifications.Application.Contracts;
 using Notifications.Application.Services;
-using Notifications.Domain.Serializer;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -72,6 +70,7 @@ builder.Services.AddScoped<SuppliersPortalActivateAccountStrategy>();
 
 // Register the NotificationStrategyContext and NotificationStrategyFactory
 builder.Services.AddScoped<INotificationStrategyContext, NotificationStrategyContext>();
+builder.Services.AddScoped<IReceiverService, ReceiverService>();
 builder.Services.AddSingleton<NotificationFactory>();
 
 // Add the notification strategies
